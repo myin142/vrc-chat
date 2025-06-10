@@ -203,7 +203,8 @@ def handle_mute(url, is_mute):
 
 dispatcher.map("/avatar/parameters/MuteSelf", handle_mute)
 print("Serving on {}".format(server.server_address))
-threading.Thread(target=lambda: server.serve_forever()).start()
+server_thread = threading.Thread(target=lambda: server.serve_forever())
+server_thread.start()
 
 with sr.Microphone() as source:
     root = Tk()
@@ -267,3 +268,5 @@ with sr.Microphone() as source:
     result_label.pack(pady=10)
 
     root.mainloop()
+
+server.shutdown()
