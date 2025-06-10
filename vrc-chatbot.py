@@ -17,6 +17,7 @@ deepl = DeepLTranslator(os.getenv('DEEPL_API'))
 VRCHAT_IP = "127.0.0.1"
 VRCHAT_PORT = 9000
 LISTEN_PORT = 9001
+MIC_TIMEOUT = 6
 osc_client = udp_client.SimpleUDPClient(VRCHAT_IP, VRCHAT_PORT)
 
 dispatcher = Dispatcher()
@@ -116,7 +117,7 @@ def transcribe_audio(language_code, mic_label):
     mic_label.config(text="Listening... Speak now!", fg="red")
     mic_label.update()
     try:
-        audio = recognizer.listen(source, timeout=5)
+        audio = recognizer.listen(source, timeout=MIC_TIMEOUT)
         text = recognizer.recognize_google(audio, language=language_code)
         mic_label.config(text="Microphone ready.", fg="green")
         return text
@@ -221,6 +222,7 @@ with sr.Microphone() as source:
     Label(root, text="Select Input Language:", bg="#f5f5f5", font=("Helvetica", 14)).pack(pady=10)
     input_language_var = StringVar()
     input_language_combo = ttk.Combobox(root, textvariable=input_language_var, values=list(language_map.keys()), state="readonly")
+    input_language_combo.bind("<<ComboboxSelected>>", lambda e: target_language_combo.set(input_language_var.get()))
     input_language_combo.set("English (US)")
     input_language_combo.pack(pady=5)
 
