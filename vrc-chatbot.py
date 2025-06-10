@@ -230,7 +230,7 @@ with sr.Microphone() as source:
     Label(root, text="Select Target Language:", bg="#f5f5f5", font=("Helvetica", 14)).pack(pady=10)
     target_language_var = StringVar()
     target_language_combo = ttk.Combobox(root, textvariable=target_language_var, values=list(language_map.keys()), state="readonly")
-    target_language_combo.set("Japanese")
+    target_language_combo.set("English (US)")
     target_language_combo.pack(pady=5)
 
     # Input Text Box
