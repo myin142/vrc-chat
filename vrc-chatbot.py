@@ -2,6 +2,7 @@
 # https://github.com/cyberkitsune/vrc-osc-scripts
 
 import os
+import time
 from dotenv import load_dotenv
 from pythonosc import osc_server, udp_client
 from pythonosc.dispatcher import Dispatcher
@@ -14,6 +15,28 @@ from translator import DeepLTranslator
 load_dotenv()
 deepl = DeepLTranslator(os.getenv('DEEPL_API'))
 
+LANGUAGES = [
+    'English (US)',
+    'Japanese',
+    'Chinese (Mandarin)',
+    'Korean'
+]
+
+LANGUAGE_TEXT = [
+    'Typing in English now...',
+    '今は日本語を使ってます...',
+    '现在用中文写...',
+    '한국어...'
+]
+
+TRANSLATE_TEXT = [
+    'Translating to English...',
+    '日本語に翻訳してる...',
+    '翻译到中文...',
+    '한국어로 번역하세요...'
+]
+
+TOGGLE_THRESHOLD = 0.5
 VRCHAT_IP = "127.0.0.1"
 VRCHAT_PORT = 9000
 LISTEN_PORT = 9001
@@ -24,77 +47,15 @@ dispatcher = Dispatcher()
 server = osc_server.ThreadingOSCUDPServer((VRCHAT_IP, LISTEN_PORT), dispatcher)
 
 language_map = {
-    # "Afrikaans": "af-ZA",
-    # "Albanian": "sq-AL",
-    # "Amharic": "am-ET",
-    # "Arabic": "ar-SA",
-    # "Arabic (Egypt)": "ar-EG",
-    # "Arabic (Gulf)": "ar-KW",
-    # "Arabic (Levant)": "ar-LB",
-    # "Armenian": "hy-AM",
-    # "Azerbaijani": "az-AZ",
-    # "Bengali": "bn-BD",
-    # "Bulgarian": "bg-BG",
-    # "Catalan": "ca-ES",
     "Chinese (Mandarin)": "zh-CN",
-    # "Chinese (Taiwan)": "zh-TW",
-    # "Croatian": "hr-HR",
-    # "Czech": "cs-CZ",
-    # "Danish": "da-DK",
-    # "Dutch": "nl-NL",
     "English (US)": "en-US",
-    # "English (UK)": "en-GB",
-    # "English (Australia)": "en-AU",
-    # "English (Canada)": "en-CA",
-    # "English (India)": "en-IN",
-    # "Finnish": "fi-FI",
-    # "French": "fr-FR",
-    # "German": "de-DE",
-    # "Greek": "el-GR",
-    # "Gujarati": "gu-IN",
-    # "Hebrew": "he-IL",
-    # "Hindi": "hi-IN",
-    # "Hungarian": "hu-HU",
-    # "Icelandic": "is-IS",
-    # "Indonesian": "id-ID",
-    # "Irish": "ga-IE",
-    # "Italian": "it-IT",
     "Japanese": "ja-JP",
-    # "Kannada": "kn-IN",
-    # "Khmer": "km-KH",
     "Korean": "ko-KR",
-    # "Latvian": "lv-LV",
-    # "Lithuanian": "lt-LT",
-    # "Malay": "ms-MY",
-    # "Malayalam": "ml-IN",
-    # "Marathi": "mr-IN",
-    # "Nepali": "ne-NP",
-    # "Norwegian Bokmål": "nb-NO",
-    # "Persian": "fa-IR",
-    # "Polish": "pl-PL",
-    # "Portuguese (Brazil)": "pt-BR",
-    # "Portuguese (Portugal)": "pt-PT",
-    # "Romanian": "ro-RO",
-    # "Russian": "ru-RU",
-    # "Serbian": "sr-RS",
-    # "Sinhala": "si-LK",
-    # "Slovak": "sk-SK",
-    # "Slovenian": "sl-SI",
-    # "Spanish": "es-ES",
-    # "Swahili": "sw-KE",
-    # "Swedish": "sv-SE",
-    # "Tamil": "ta-IN",
-    # "Telugu": "te-IN",
-    # "Thai": "th-TH",
-    # "Turkish": "tr-TR",
-    # "Ukrainian": "uk-UA",
-    # "Urdu": "ur-PK",
-    # "Vietnamese": "vi-VN",
-    # "Zulu": "zu-ZA"
 }
 
 recognizer = sr.Recognizer()
 last_request_time = datetime.datetime.now() - datetime.timedelta(seconds=5)
+received_mute = False
 
 def check_limit():
     """
@@ -173,7 +134,12 @@ def start_translation(input_language, target_language, input_text_box, result_la
         osc_client.send_message("/chatbox/typing", False)
         return
     
+    send_translation(input_text, input_language, target_language, result_label)
+
+def send_translation(input_text, input_language, target_language, result_label):
     target_lang_code = language_map.get(target_language)
+    input_lang_code = language_map.get(input_language)
+
     if input_lang_code == target_lang_code:
         output_text = f"{input_text}"
         result_label.config(text=output_text, fg="blue")
@@ -189,10 +155,22 @@ def start_translation(input_language, target_language, input_text_box, result_la
 
     osc_client.send_message("/chatbox/typing", False)
 
+def reset_mute():
+    global received_mute
+
+    time.sleep(TOGGLE_THRESHOLD)
+    received_mute = False
+    print("Resetting mute state.")
+
 def handle_mute(url, is_mute):
+    global received_mute
     print(f"Received {url}: {is_mute}")
 
-    if is_mute:
+    if not is_mute and not received_mute:
+        received_mute = True
+        threading.Thread(target=reset_mute).start()
+    elif is_mute and received_mute:
+        received_mute = False
         threading.Thread(target=start_translation, args=(
                 input_language_var.get(),
                 target_language_var.get(),
@@ -202,7 +180,26 @@ def handle_mute(url, is_mute):
                 True
             )).start()
 
+def set_input_language(value):
+    if value < 0 or value >= len(LANGUAGES): return
+    print(f"Setting input language to {value}")
+    lang = LANGUAGES[value]
+    input_language_combo.set(lang)
+    target_language_combo.set(lang)
+    send_to_chatbox(f'[CHAT] {LANGUAGE_TEXT[value]}')
+
+def set_translate_language(value):
+    if value < 0 or value >= len(LANGUAGES): return
+    print(f"Setting translate language to {value}")
+    lang = LANGUAGES[value]
+    target_language_combo.set(lang)
+    send_to_chatbox(f'[CHAT] {TRANSLATE_TEXT[value]}')
+
+
 dispatcher.map("/avatar/parameters/MuteSelf", handle_mute)
+dispatcher.map("/avatar/parameters/Language", lambda url, value: set_input_language(value-1))
+dispatcher.map("/avatar/parameters/Translate", lambda url, value: set_translate_language(value-1))
+
 print("Serving on {}".format(server.server_address))
 server_thread = threading.Thread(target=lambda: server.serve_forever())
 server_thread.start()
