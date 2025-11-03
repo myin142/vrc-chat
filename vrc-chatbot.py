@@ -45,6 +45,9 @@ received_mute = False
 input_lang = 'en-US'
 target_lang = 'en-US'
 is_recording = False
+continuous_mode = False
+continuous_thread = None
+continuous_running = False
 
 # GUI variables
 root = None
@@ -52,6 +55,8 @@ input_lang_var = None
 target_lang_var = None
 status_label = None
 record_button = None
+continuous_var = None
+continuous_checkbox = None
 
 
 def check_limit():
@@ -66,11 +71,14 @@ def check_limit():
     return True
 
 
-def transcribe_audio(language_code):
+def transcribe_audio(language_code, use_timeout=True):
     try:
         print("Listening for audio input...")
         with sr.Microphone() as source:
-            audio = recognizer.listen(source, timeout=MIC_TIMEOUT)
+            if use_timeout:
+                audio = recognizer.listen(source, timeout=MIC_TIMEOUT)
+            else:
+                audio = recognizer.listen(source, timeout=MIC_TIMEOUT, phrase_time_limit=None)
         text = recognizer.recognize_google(audio, language=language_code)
         return text
     except sr.WaitTimeoutError:
@@ -82,6 +90,67 @@ def transcribe_audio(language_code):
     except Exception as e:
         print(f"Error during transcription: {e}")
         return None
+
+
+def continuous_translation_loop():
+    global continuous_running
+    
+    print("Starting continuous translation loop...")
+    
+    with sr.Microphone() as source:
+        recognizer.adjust_for_ambient_noise(source, duration=1)
+        
+        while continuous_running:
+            try:
+                update_status("Listening (Continuous)...")
+                print("Continuous mode: Listening for speech...")
+                
+                # Listen for speech with automatic phrase detection
+                audio = recognizer.listen(source, timeout=2, phrase_time_limit=10)
+                
+                update_status("Processing...")
+                print("Continuous mode: Speech detected, processing...")
+                
+                # Transcribe the audio
+                text = recognizer.recognize_google(audio, language=input_lang)
+                
+                if text:
+                    print(f"Continuous mode: Transcribed: {text}")
+                    send_translation(text, input_lang, target_lang)
+                
+                # Small delay before next listen
+                time.sleep(0.5)
+                
+            except sr.WaitTimeoutError:
+                # No speech detected, continue listening
+                continue
+            except sr.UnknownValueError:
+                print("Continuous mode: Could not understand audio")
+                continue
+            except Exception as e:
+                print(f"Continuous mode error: {e}")
+                time.sleep(1)
+        
+    print("Continuous translation loop ended.")
+    update_status("Ready")
+
+def start_continuous_mode():
+    global continuous_running, continuous_thread
+    
+    if continuous_running:
+        return
+    
+    continuous_running = True
+    continuous_thread = threading.Thread(target=continuous_translation_loop, daemon=True)
+    continuous_thread.start()
+    update_status("Continuous Mode Active")
+
+
+def stop_continuous_mode():
+    global continuous_running
+    
+    continuous_running = False
+    update_status("Ready")
 
 
 def translate_text(text, input_language, target_language):
@@ -206,6 +275,19 @@ def on_target_lang_change(*args):
         print(f"Target language changed to: {target_lang}")
 
 
+def toggle_continuous_mode():
+    global continuous_mode
+    
+    continuous_mode = continuous_var.get()
+    
+    if continuous_mode:
+        print("Continuous mode enabled")
+        start_continuous_mode()
+    else:
+        print("Continuous mode disabled")
+        stop_continuous_mode()
+
+
 def toggle_recording():
     global is_recording
     
@@ -232,19 +314,20 @@ def start_osc_server():
 
 
 def on_closing():
-    global server
+    global server, continuous_running
     print("Shutting down...")
+    continuous_running = False
     if server:
         server.shutdown()
     root.destroy()
 
 
 def create_gui():
-    global root, input_lang_var, target_lang_var, status_label, record_button
+    global root, input_lang_var, target_lang_var, status_label, record_button, continuous_var, continuous_checkbox
     
     root = Tk()
     root.title("VRChat Translation Chatbot")
-    root.geometry("400x300")
+    root.geometry("400x350")
     root.protocol("WM_DELETE_WINDOW", on_closing)
     
     # Title
@@ -287,6 +370,21 @@ def create_gui():
     target_lang_dropdown.pack(side="right")
     target_lang_var.trace("w", on_target_lang_change)
     
+    # Continuous Mode Checkbox
+    from tkinter import BooleanVar, Checkbutton
+    continuous_frame = Frame(root)
+    continuous_frame.pack(pady=10, padx=20, fill="x")
+    
+    continuous_var = BooleanVar(value=False)
+    continuous_checkbox = Checkbutton(
+        continuous_frame,
+        text="Enable Continuous Translation",
+        variable=continuous_var,
+        command=toggle_continuous_mode,
+        font=("Arial", 9)
+    )
+    continuous_checkbox.pack(anchor="w")
+    
     # Recording Button
     record_button = Button(
         root,
@@ -298,7 +396,7 @@ def create_gui():
         width=20,
         height=2
     )
-    record_button.pack(pady=20)
+    record_button.pack(pady=15)
     
     # Status Label
     status_label = Label(root, text="Status: Ready", font=("Arial", 10), fg="blue")
