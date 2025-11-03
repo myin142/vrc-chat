@@ -6,7 +6,7 @@ import time
 from dotenv import load_dotenv
 from pythonosc import osc_server, udp_client
 from pythonosc.dispatcher import Dispatcher
-from tkinter import Tk, Text, Label, Button, ttk, StringVar
+from tkinter import Tk, Label, Button, ttk, StringVar, Frame
 import speech_recognition as sr
 import threading
 import datetime
@@ -37,13 +37,21 @@ MIC_TIMEOUT = 6
 osc_client = udp_client.SimpleUDPClient(VRCHAT_IP, VRCHAT_PORT)
 
 dispatcher = Dispatcher()
-server = osc_server.ThreadingOSCUDPServer((VRCHAT_IP, LISTEN_PORT), dispatcher)
+server = None
 
 recognizer = sr.Recognizer()
 last_request_time = datetime.datetime.now() - datetime.timedelta(seconds=5)
 received_mute = False
 input_lang = 'en-US'
 target_lang = 'en-US'
+is_recording = False
+
+# GUI variables
+root = None
+input_lang_var = None
+target_lang_var = None
+status_label = None
+record_button = None
 
 
 def check_limit():
@@ -61,7 +69,8 @@ def check_limit():
 def transcribe_audio(language_code):
     try:
         print("Listening for audio input...")
-        audio = recognizer.listen(source, timeout=MIC_TIMEOUT)
+        with sr.Microphone() as source:
+            audio = recognizer.listen(source, timeout=MIC_TIMEOUT)
         text = recognizer.recognize_google(audio, language=language_code)
         return text
     except sr.WaitTimeoutError:
@@ -97,10 +106,12 @@ def send_to_chatbox(output_text):
 
 def start_translation(input_language, target_language):
     osc_client.send_message("/chatbox/typing", True)
+    update_status("Recording...")
     input_text = transcribe_audio(input_language)
 
     if not input_text:
         osc_client.send_message("/chatbox/typing", False)
+        update_status("Ready")
         return
 
     send_translation(input_text, input_language, target_language)
@@ -117,6 +128,7 @@ def send_translation(input_text, input_language, target_language):
             print("Translation failed.")
 
     osc_client.send_message("/chatbox/typing", False)
+    update_status("Ready")
 
 
 def reset_mute():
@@ -149,6 +161,13 @@ def set_input_language(value):
 
     input_lang = lang
     target_lang = lang
+    
+    # Update GUI
+    if input_lang_var:
+        input_lang_var.set(LANGUAGE_TEXT[value])
+    if target_lang_var:
+        target_lang_var.set(LANGUAGE_TEXT[value])
+    
     send_to_chatbox(f'[CHAT] {LANGUAGE_TEXT[value]}')
 
 
@@ -161,14 +180,158 @@ def set_translate_language(value):
     print(f"Setting translate language to {lang} with input {input_lang}")
 
     target_lang = lang
+    
+    # Update GUI
+    if target_lang_var:
+        target_lang_var.set(LANGUAGE_TEXT[value])
+    
     send_to_chatbox(f'[CHAT] {LANGUAGE_TEXT[LANGUAGES.index(input_lang)]} -> {lang}')
 
 
-dispatcher.map("/avatar/parameters/MuteSelf", handle_mute)
-dispatcher.map("/avatar/parameters/Language", lambda url, value: set_input_language(value-1))
-dispatcher.map("/avatar/parameters/Translate", lambda url, value: set_translate_language(value-1))
+def on_input_lang_change(*args):
+    global input_lang
+    selected = input_lang_var.get()
+    if selected in LANGUAGE_TEXT:
+        index = LANGUAGE_TEXT.index(selected)
+        input_lang = LANGUAGES[index]
+        print(f"Input language changed to: {input_lang}")
 
-with sr.Microphone() as source:
-    print("Serving on {}".format(server.server_address))
+
+def on_target_lang_change(*args):
+    global target_lang
+    selected = target_lang_var.get()
+    if selected in LANGUAGE_TEXT:
+        index = LANGUAGE_TEXT.index(selected)
+        target_lang = LANGUAGES[index]
+        print(f"Target language changed to: {target_lang}")
+
+
+def toggle_recording():
+    global is_recording
+    
+    if is_recording:
+        is_recording = False
+        record_button.config(text="Start Recording", bg="green")
+        update_status("Ready")
+    else:
+        is_recording = True
+        record_button.config(text="Stop Recording", bg="red")
+        threading.Thread(target=start_translation, args=(input_lang, target_lang)).start()
+
+
+def update_status(text):
+    if status_label:
+        status_label.config(text=f"Status: {text}")
+
+
+def start_osc_server():
+    global server
+    server = osc_server.ThreadingOSCUDPServer((VRCHAT_IP, LISTEN_PORT), dispatcher)
+    print(f"OSC Server serving on {server.server_address}")
     server.serve_forever()
-server.shutdown()
+
+
+def on_closing():
+    global server
+    print("Shutting down...")
+    if server:
+        server.shutdown()
+    root.destroy()
+
+
+def create_gui():
+    global root, input_lang_var, target_lang_var, status_label, record_button
+    
+    root = Tk()
+    root.title("VRChat Translation Chatbot")
+    root.geometry("400x300")
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    
+    # Title
+    title_label = Label(root, text="VRChat Translation Chatbot", font=("Arial", 14, "bold"))
+    title_label.pack(pady=10)
+    
+    # Input Language Selection
+    input_frame = Frame(root)
+    input_frame.pack(pady=10, padx=20, fill="x")
+    
+    input_label = Label(input_frame, text="Input Language:", font=("Arial", 10))
+    input_label.pack(side="left")
+    
+    input_lang_var = StringVar(value=LANGUAGE_TEXT[0])
+    input_lang_dropdown = ttk.Combobox(
+        input_frame,
+        textvariable=input_lang_var,
+        values=LANGUAGE_TEXT,
+        state="readonly",
+        width=15
+    )
+    input_lang_dropdown.pack(side="right")
+    input_lang_var.trace("w", on_input_lang_change)
+    
+    # Translation Language Selection
+    target_frame = Frame(root)
+    target_frame.pack(pady=10, padx=20, fill="x")
+    
+    target_label = Label(target_frame, text="Translation Language:", font=("Arial", 10))
+    target_label.pack(side="left")
+    
+    target_lang_var = StringVar(value=LANGUAGE_TEXT[0])
+    target_lang_dropdown = ttk.Combobox(
+        target_frame,
+        textvariable=target_lang_var,
+        values=LANGUAGE_TEXT,
+        state="readonly",
+        width=15
+    )
+    target_lang_dropdown.pack(side="right")
+    target_lang_var.trace("w", on_target_lang_change)
+    
+    # Recording Button
+    record_button = Button(
+        root,
+        text="Start Recording",
+        command=toggle_recording,
+        font=("Arial", 12, "bold"),
+        bg="green",
+        fg="white",
+        width=20,
+        height=2
+    )
+    record_button.pack(pady=20)
+    
+    # Status Label
+    status_label = Label(root, text="Status: Ready", font=("Arial", 10), fg="blue")
+    status_label.pack(pady=10)
+    
+    # Info Label
+    info_label = Label(
+        root,
+        text="OSC Server listening on port 9001",
+        font=("Arial", 8),
+        fg="gray"
+    )
+    info_label.pack(side="bottom", pady=5)
+    
+    return root
+
+
+def main():
+    global dispatcher
+    
+    # Set up OSC dispatcher
+    dispatcher.map("/avatar/parameters/MuteSelf", handle_mute)
+    dispatcher.map("/avatar/parameters/Language", lambda url, value: set_input_language(value-1))
+    dispatcher.map("/avatar/parameters/Translate", lambda url, value: set_translate_language(value-1))
+    
+    # Start OSC server in a separate thread
+    osc_thread = threading.Thread(target=start_osc_server, daemon=True)
+    osc_thread.start()
+    
+    # Create and run GUI
+    gui = create_gui()
+    gui.mainloop()
+
+
+if __name__ == "__main__":
+    main()
