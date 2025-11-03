@@ -57,6 +57,7 @@ status_label = None
 record_button = None
 continuous_var = None
 continuous_checkbox = None
+output_label = None
 
 
 def check_limit():
@@ -106,7 +107,7 @@ def continuous_translation_loop():
                 print("Continuous mode: Listening for speech...")
                 
                 # Listen for speech with automatic phrase detection
-                audio = recognizer.listen(source, timeout=2, phrase_time_limit=10)
+                audio = recognizer.listen(source, timeout=2, phrase_time_limit=30)
                 
                 update_status("Processing...")
                 print("Continuous mode: Speech detected, processing...")
@@ -141,6 +142,8 @@ def start_continuous_mode():
         return
     
     continuous_running = True
+    if record_button:
+        record_button.config(state="disabled")
     continuous_thread = threading.Thread(target=continuous_translation_loop, daemon=True)
     continuous_thread.start()
     update_status("Continuous Mode Active")
@@ -150,6 +153,8 @@ def stop_continuous_mode():
     global continuous_running
     
     continuous_running = False
+    if record_button:
+        record_button.config(state="normal")
     update_status("Ready")
 
 
@@ -174,30 +179,46 @@ def send_to_chatbox(output_text):
 
 
 def start_translation(input_language, target_language):
+    global is_recording
+    
     osc_client.send_message("/chatbox/typing", True)
     update_status("Recording...")
     input_text = transcribe_audio(input_language)
 
     if not input_text:
         osc_client.send_message("/chatbox/typing", False)
+        is_recording = False
         update_status("Ready")
+        if record_button:
+            record_button.config(text="Start Recording", bg="green")
         return
 
     send_translation(input_text, input_language, target_language)
 
 
 def send_translation(input_text, input_language, target_language):
+    global is_recording
+    
     if input_language == target_language:
-        send_to_chatbox(f'{input_text}')
+        output_text = f'{input_text}'
+        send_to_chatbox(output_text)
     else:
         translated_text = translate_text(input_text, input_language, target_language)
         if translated_text:
-            send_to_chatbox(f'{translated_text} ({input_text})')
+            output_text = f'{translated_text} ({input_text})'
+            send_to_chatbox(output_text)
         else:
             print("Translation failed.")
+            output_text = "Translation failed"
 
     osc_client.send_message("/chatbox/typing", False)
+    is_recording = False
     update_status("Ready")
+    update_output(output_text)
+    
+    # Update button state if in recording mode
+    if record_button:
+        record_button.config(text="Start Recording", bg="green")
 
 
 def reset_mute():
@@ -258,12 +279,16 @@ def set_translate_language(value):
 
 
 def on_input_lang_change(*args):
-    global input_lang
+    global input_lang, target_lang
     selected = input_lang_var.get()
     if selected in LANGUAGE_TEXT:
         index = LANGUAGE_TEXT.index(selected)
         input_lang = LANGUAGES[index]
+        target_lang = LANGUAGES[index]
         print(f"Input language changed to: {input_lang}")
+        # Update the target language dropdown to match
+        if target_lang_var:
+            target_lang_var.set(selected)
 
 
 def on_target_lang_change(*args):
@@ -306,6 +331,11 @@ def update_status(text):
         status_label.config(text=f"Status: {text}")
 
 
+def update_output(text):
+    if output_label:
+        output_label.config(text=text)
+
+
 def start_osc_server():
     global server
     server = osc_server.ThreadingOSCUDPServer((VRCHAT_IP, LISTEN_PORT), dispatcher)
@@ -323,11 +353,11 @@ def on_closing():
 
 
 def create_gui():
-    global root, input_lang_var, target_lang_var, status_label, record_button, continuous_var, continuous_checkbox
+    global root, input_lang_var, target_lang_var, status_label, record_button, continuous_var, continuous_checkbox, output_label
     
     root = Tk()
     root.title("VRChat Translation Chatbot")
-    root.geometry("400x350")
+    root.geometry("400x500")
     root.protocol("WM_DELETE_WINDOW", on_closing)
     
     # Title
@@ -397,6 +427,21 @@ def create_gui():
         height=2
     )
     record_button.pack(pady=15)
+    
+    # Output Display
+    output_frame = Frame(root, bg="lightgray", relief="sunken", bd=1)
+    output_frame.pack(pady=10, padx=20, fill="both", expand=True)
+    
+    output_label = Label(
+        output_frame,
+        text="Output will appear here",
+        font=("Arial", 9),
+        wraplength=350,
+        justify="left",
+        bg="lightgray",
+        fg="black"
+    )
+    output_label.pack(padx=5, pady=5, fill="both", expand=True)
     
     # Status Label
     status_label = Label(root, text="Status: Ready", font=("Arial", 10), fg="blue")
