@@ -8,6 +8,7 @@ Requirements (system packages):
   - grim    : Wayland-native screenshot utility
   - slurp   : Wayland-native region / window selector
   - swaymsg : Sway IPC (ships with Sway)
+    - wl-copy : Clipboard writer (from wl-clipboard)
   - jq      : JSON processor (used internally by swaymsg)
 
 Usage:
@@ -40,7 +41,7 @@ def run(cmd: list[str], *, capture: bool = True) -> subprocess.CompletedProcess:
 def check_dependencies() -> None:
     """Make sure the required system tools are installed."""
     missing = []
-    for tool in ("grim", "slurp", "swaymsg"):
+    for tool in ("grim", "slurp", "swaymsg", "wl-copy"):
         if not _which(tool):
             missing.append(tool)
     if missing:
@@ -196,6 +197,30 @@ def capture_window(rect: dict, output_path: str) -> str:
     return output_path
 
 
+def copy_image_to_clipboard(image_path: str) -> bool:
+    """Copy a PNG image file into the Wayland clipboard using wl-copy."""
+    try:
+        with open(image_path, "rb") as image_file:
+            result = subprocess.run(
+                ["wl-copy", "--type", "image/png"],
+                stdin=image_file,
+                capture_output=True,
+            )
+    except OSError as exc:
+        print(f"Warning: failed to copy screenshot to clipboard: {exc}", file=sys.stderr)
+        return False
+
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace").strip()
+        if stderr:
+            print(f"Warning: failed to copy screenshot to clipboard: {stderr}", file=sys.stderr)
+        else:
+            print("Warning: failed to copy screenshot to clipboard.", file=sys.stderr)
+        return False
+
+    return True
+
+
 def default_output_path() -> str:
     """Generate a timestamped filename in ~/Pictures/Screenshots/."""
     screenshots_dir = Path.home() / "Pictures" / "Screenshots"
@@ -266,11 +291,14 @@ def main() -> None:
     output = os.path.expanduser(output)
 
     capture_window(window["rect"], output)
+    copied = copy_image_to_clipboard(output)
 
     app_label = window.get("app_id", "unknown")
     title = window.get("name", "")
     print(f"✓ Captured [{app_label}] {title}")
     print(f"  → {output}")
+    if copied:
+        print("  → Copied to clipboard")
 
 
 if __name__ == "__main__":
